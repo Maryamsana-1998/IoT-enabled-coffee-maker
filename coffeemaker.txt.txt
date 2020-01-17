@@ -1,0 +1,272 @@
+Code:
+
+
+/*  This program blinks the red LED on the
+ *  TI Tiva LaunchPad.  The connections are:
+ PF1->red LED also connected to pin 2 of L293D motor driver
+ PF2->blue LED also connected to pin 7 of L293D MOTOR DRIVER
+ PF3->green LED
+ PC4->RX pin
+ PC5->TX pin
+ PE2 and PE4 -> for ADC configuration
+ PB6->PWM 
+ 
+ AIN1->PE2: Analog to digital converter input 1
+ AIN9->PE4:Analog to digital converter input 9 
+ note: ADC has total 12 i/p 0 to 11
+*/
+
+#include "TM4C123GH6PM.h"
+//#include <lpc214x.h> -> including this library gives error
+#include <stdint.h>
+#include <stdbool.h>
+
+//below are the names assigned to the addresses of the registers (will be used in UART_Init() function).
+#define SYS_CTRL_RCC     (*((volatile unsigned long*)0x400FE060))
+#define SYS_CTRL_RCGC0     (*((volatile unsigned long*)0x400FE100))
+#define SYS_CTRL_RCGC2     (*((volatile unsigned long*)0x400FE108))
+#define SYS_CTRL_RCGCADC    (*((volatile unsigned long*)0x400FE638))
+#define SYS_CTRL_PRGPIO     (*((volatile unsigned long*)0x400FEA08))
+#define SYS_CTRL_RCGCGPIO    (*((volatile unsigned long*)0x400FE608))
+#define SYS_CTRL_GPIOHBCTL    (*((volatile unsigned long*)0x400FE06C))
+
+#define SYSCTL_RCGC2_R      (*((volatile unsigned long*)0x400FE608)) //clock address for GPIO mode
+#define SYSCTL_RCGC1_R      (*((volatile unsigned long*)0x400FE618)) //clock for UART mode
+#define GPIO_PORTC_AMSEL_R  (*((volatile unsigned long*)0x40006528)) //amsel for port c
+#define GPIO_PORTC_AFSEL_R  (*((volatile unsigned long*)0x40006420))
+#define GPIO_PORTC_DEN_R    (*((volatile unsigned long*)0x4000651C)) //to enable the pins we want to use 
+#define GPIO_PORTC_PCTL_R   (*((volatile unsigned long*)0x4000652C)) 
+#define UART1_CTL_R         (*((volatile unsigned long*)0x4000D030))
+#define UART1_IBRD_R        (*((volatile unsigned long*)0x4000D024))  //FOR BAUD RATE 
+#define UART1_FBRD_R        (*((volatile unsigned long*)0x4000D028))  //FOR BAUD RATE 
+#define UART1_LCRH_R        (*((volatile unsigned long*)0x4000D02C))
+#define UART1_FR_R          (*((volatile unsigned long*)0x4000D018))
+#define UART1_DR_R          (*((volatile unsigned long*)0x4000D000))
+
+//************************************************************************************************
+//-------------------------GPIO PORTB REGISTERS---------------------------------------------------
+//************************************************************************************************
+#define GPIO_PORTB_DATA    (*((volatile unsigned long*)0x400053FC))
+#define GPIO_PORTB_DIR    (*((volatile unsigned long*)0x40005400))
+#define GPIO_PORTB_DEN    (*((volatile unsigned long*)0x4000551C))
+#define GPIO_PORTB_AFSEL   (*((volatile unsigned long*)0x40005420))
+#define GPIO_PORTB_PCTL       (*((volatile unsigned long*)0x4000552C))
+#define GPIO_PORTB_AMSEL   (*((volatile unsigned long*)0x40005528))
+
+#define SYS_CTRL_RCGC2_GPIOB  0x00000002
+
+
+//*************************************************************************************************
+//------------------------PWM REGISTER-------------------------------------------------------------
+//*************************************************************************************************
+#define PWM_CTL_R              (*((volatile unsigned long *)0x40028000))
+#define PWM_ENABLE_R            (*((volatile unsigned long *)0x40028008))
+#define PWM0_CTL_R              (*((volatile unsigned long *)0x40028040))
+#define PWM0_LOAD_R             (*((volatile unsigned long *)0x40028050))
+#define PWM0_CMPA_R             (*((volatile unsigned long *)0x40028058))
+#define PWM0_GENA_R             (*((volatile unsigned long *)0x40028060))
+
+
+//function prototypes:
+void UART_Init(void); // UART initialization ;should be called only once
+void ADC_Init(void); //ADC initialization
+void PWM_Init(void); //Pulse Width Modulation initialization function
+unsigned long UART_InChar(void); //read input from esp8266
+unsigned long ADC_read(void);//read the analog input 
+unsigned long output;//output from esp8266
+void esp8266_start(void);//to start esp8266 communication
+void UART_OutChar(unsigned char data);//to send data 
+
+
+void delayMs(int n)
+{
+    int i, j;
+    for(i = 0 ; i < n; i++)
+        for(j = 0; j < 3180; j++)
+            {}  // do nothing for 1 ms
+}
+
+
+
+void glow() //led blinking function
+	{
+	      GPIOF->DATA = 0x04;     // turn on red LED
+        delayMs(500);
+        
+        GPIOF->DATA = 0;        // turn off red LED
+        delayMs(500); 
+		
+}
+
+
+unsigned long input; //variable to store data read from app
+
+
+int main(void)
+{
+	UART_Init(); //call function to initialize UART MODE
+      ADC_Init();
+	   // PWM_Init();//initialize PWM pin E2 and E4
+	esp8266_start();//connect to esp8266!
+    // enable clock to GPIOF at clock gating control register
+    SYSCTL->RCGCGPIO |= 0x20;// enable the GPIO pins for the LED (PF3, 2 1) as output
+    GPIOF->DIR = 0x0e;// enable the GPIO pins for digital function
+    GPIOF->DEN = 0x0e;
+	  output=UART_InChar();
+      while(output=='A'){          
+		GPIOF->DATA=0x02; //PF1 connected to pin 2 of motor driver IC is set
+		delayMs(3000);//3 sec delay	motor spins in clockwise direction
+		GPIOF->DATA=0x00; //PF1 connected to pin 2 of motor driver IC is cleared and motor stops
+		delayMs(2000);//2 sec delay	
+		GPIOF->DATA=0x04; //PF2 connected to pin 7 of motor driver IC is set
+		delayMs(3000);//3 sec delay	motor spins in anticlockwise direction
+		GPIOF->DATA=0x00; //PF2 connected to pin 7 of motor driver IC is cleared
+		delayMs(2000);//2 sec delay		
+			}//while 
+   
+ // while(1){glow();}//while
+		  
+	
+}//main end
+
+
+
+void ADC_Init(){
+	unsigned long delay=0;
+	//for ADC we will use port E pin 2 so activate port E
+  SYSCTL_RCGC2_R |= 0x00000010;   // 1) activate clock for Port E
+  delay = SYSCTL_RCGC2_R;         //    allow time for clock to stabilize
+  GPIOE->DIR &= ~0x04;      // 2) make PE4 input
+  GPIOE->AFSEL |= 0x04;     // 3) enable alternate function on PE2
+  GPIOE->DEN &= ~0x04;      // 4) disable digital I/O on PE2 as we will use it in analog mode
+  GPIOE->AMSEL |= 0x04;     // 5) enable analog function on PE2
+  SYSCTL->RCGC0 |= 0x00010000;   // 6) activate ADC0 for port E
+
+  delay = SYSCTL_RCGC2_R;        
+
+  SYSCTL->RCGC0 &= ~0x00000300;  // 7) configure for 125K
+  ADC0->SSPRI = 0x0123;          // 8) Sequencer 3 is highest priority
+  ADC0->ACTSS &= ~0x0008;        // 9) disable sample sequencer 3
+  ADC0->EMUX &= ~0xF000;         // 10) seq3 is software trigger
+  ADC0->SSMUX3 &= ~0x000F;       // 11) clear SS3 field
+  ADC0->SSMUX3 += 9;             //    set channel Ain9 (PE4)
+  ADC0->SSCTL3 = 0x0006;         // 12) no TS0 D0, yes IE0 END0
+  ADC0->ACTSS |= 0x0008;         // 13) enable sample sequencer 3
+}
+
+unsigned long ADC_read(){
+	unsigned long result;
+  ADC0->PSSI = 0x0008;            // 1) initiate SS3
+  while((ADC0->RIS&0x08)==0){};   // 2) wait for conversion done
+  result = ADC0->SSFIFO3&0xFFF;   // 3) read result
+  ADC0->ISC = 0x0008;             // 4) acknowledge completion
+  return result;
+}
+
+
+//PWM is a methid that converts analog input to digital 1's and 0's so the microcontroller can understand it 
+/*configured Pin PB6 as output, Enable clock for PORTB, 
+Enabled Alternate function on this PIN so that PWM can work correctly. 
+Disabled analogue functionality on this pin. Make it enabled for Digital Data.*/
+//PB6 generates PWM wave
+void Pin_PB6_Init(void)
+{
+ SYS_CTRL_RCGC0|=0x00100000;//Enable PWM Clock
+ SYS_CTRL_PRGPIO|=(SYS_CTRL_RCGC2_GPIOB);//Enable Clock to PORTB
+ SYS_CTRL_RCGC2|=(SYS_CTRL_RCGC2_GPIOB);//Enable Clock to PORTB
+ GPIO_PORTB_AFSEL|=(0x00000040);//Enable Alternate Function on PB6
+ GPIO_PORTB_PCTL&=~0x0F000000;//PORT MUX CONTROL 6
+ GPIO_PORTB_PCTL|=0x04000000;//PORT MUX CONTROL 6
+ GPIO_PORTB_AMSEL&=~0x40;//Disable Analogue Functionality
+ SYS_CTRL_RCC|=0x00100000|(SYS_CTRL_RCC &(~0x000E0000));//Use PWMDIV, DIV_2, BYPASS=0,
+ GPIO_PORTB_DIR|=0x0000000F;//Make Output
+ GPIO_PORTB_DEN|=0x000000FF;// Digital Data is Enabled
+
+}
+
+
+/*void PWM_Init(void){
+
+ PWM0_CTL_R=0x00000000;//Disable PWM
+ PWM0_GENA_R|=0x000000C8;//Drive PWMa High,Action for Comparator is drive high
+ PWM0_LOAD_R|=0x00186A00;//Load 1600000 for 6 Hz frequency so that we can check blinking of LED.
+ PWM0_CMPA_R|=0x00000063;//25% Duty Cycle
+ PWM0_CTL_R|=0x00000001;//Start Timer for PWM Generator
+ PWM_ENABLE_R|=0x00000001;//Start PWM
+
+
+}*/
+
+
+
+
+//to read input from esp8266
+unsigned long UART_InChar(void){
+
+  while((UART1_FR_R&0x0010) != 0);      // wait until RXFE is 0 and no more data is left to read
+
+  return((UART1_DR_R&0xFF));  //return the last 8 bits of data read from data register of UART pin 
+
+}
+
+
+//UART_Init initializes UART mode and port C pin C4 is used as RX and C5 as TX.
+void UART_Init(void) // initialization ;should be called only once
+	{          
+	
+  SYSCTL_RCGC1_R |= 0x00000002;  // activate UART1
+  SYSCTL_RCGC2_R |= 0x00000004;  // activate port C
+  UART1_CTL_R &= ~0x00000001;    // Disable the UART by clearing the UARTEN bit in the UARTCTL register
+  UART1_IBRD_R = 520;             // IBRD = int(80,000,000/(16*9600)) = int(520.8333)
+  UART1_FBRD_R = 53;             // FBRD = round(0.40278 * 64) = 26
+  UART1_LCRH_R = 0x00000070;     // 8 bit, no parity bits, one stop, FIFOs
+  UART1_CTL_R |= 0x00000001;     // Enable the UART by setting the UARTEN bit in the UARTCTL register.
+  GPIO_PORTC_AFSEL_R |= 0x30;    // enable alt funct on PC5-4
+  GPIO_PORTC_DEN_R |= 0x30;      // configure PC5-4 as UART1
+  GPIO_PORTC_PCTL_R = (GPIO_PORTC_PCTL_R&0xFF00FFFF)+0x00220000;
+  GPIO_PORTC_AMSEL_R &= ~0x30;   // disable analog on PC5-4
+}
+
+// Wait for buffer to be not full, then output
+void UART_OutChar(unsigned char data){
+
+  while((UART1_FR_R&0x0020) != 0);      // wait until TXFF is 0
+
+  UART1_DR_R = data;
+
+}
+
+
+void esp8266_start()//to start esp8266 communication
+{
+  const char enable[] = "AT+CIPMUX=1\n\r"; //code to enable server
+  const char connect[] = "AT+CIPSERVER=1,333\n\r"; //code to connect device to port
+	int i,j;
+	for(i=0;i<=10;i++)
+	{
+	GPIOF->DATA = 0x02;     // turn on red LED
+	UART_OutChar(enable[i]);
+	}//for
+	delayMs(500);
+
+	for(j=0;j<=14;j++){
+	UART_OutChar(connect[j]);
+	}//for end
+	delayMs(500);
+	
+}//esp8266end
+
+
+
+// This function is called by the startup assembly 
+// code to perform system specific initialization tasks.
+void SystemInit(void)
+{
+    // Grant coprocessor access
+    // This is required since TM4C123G has 
+    // a floating point coprocessor
+    SCB->CPACR |= 0x00F00000;
+}
+
+
+
